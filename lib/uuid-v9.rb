@@ -31,8 +31,7 @@ class UUIDv9
   def self.check_version(uuid, version = nil)
     version_digit = uuid[14]
     variant_digit = uuid[19]
-    (!version || version_digit == version) &&
-      (version_digit == '9' || (['1', '4'].include?(version_digit) && "89abAB".include?(variant_digit)))
+    (!version || (version_digit == version.to_s && "89abAB".include?(variant_digit)))
   end
 
   def self.is_uuid?(uuid)
@@ -42,7 +41,7 @@ class UUIDv9
   def self.is_valid_uuidv9?(uuid, options)
     is_uuid?(uuid) &&
       (!options.key?(:checksum) || !options[:checksum] || verify_checksum(uuid)) &&
-      (!options.key?(:version) || !options[:version] || check_version(uuid))
+      (!options.key?(:version) || !options[:version] || check_version(uuid, options[:version]))
   end
 
   def self.random_bytes(count)
@@ -58,9 +57,15 @@ class UUIDv9
   end
 
   def self.validate_prefix(prefix)
-    raise ArgumentError, 'Prefix must be a string' if prefix.nil?
+    raise ArgumentError, 'Prefix must be a string' unless prefix.is_a?(String) # isinstance?(prefix, str)
     raise ArgumentError, 'Prefix must be no more than 8 characters' if prefix.length > 8
     raise ArgumentError, 'Prefix must be only hexadecimal characters' unless is_base16?(prefix)
+  end
+
+  def self.validate_suffix(suffix)
+    raise ArgumentError, 'Suffix must be a string' unless suffix.is_a?(String) # isinstance?(suffix, str)
+    raise ArgumentError, 'Suffix must be no more than 4 characters' if suffix.length > 4
+    raise ArgumentError, 'Suffix must be only hexadecimal characters' unless is_base16?(suffix)
   end
 
   def self.add_dashes(str)
@@ -68,15 +73,21 @@ class UUIDv9
   end
 
   def self.generate(options = {})
-    prefix = options.fetch(:prefix, nil).to_s
+    prefix = options.fetch(:prefix, nil) # .to_s
     timestamp = options.fetch(:timestamp, true)
     checksum = options.fetch(:checksum, false)
     version = options.fetch(:version, false)
     legacy = options.fetch(:legacy, false)
+    suffix = options.fetch(:suffix, nil) # .to_s
 
     if prefix && !prefix.empty?
       validate_prefix(prefix)
       prefix = prefix.downcase
+    end
+
+    if suffix && !suffix.empty?
+      validate_suffix(suffix)
+      suffix = suffix.downcase
     end
 
     center = case timestamp
@@ -90,15 +101,15 @@ class UUIDv9
               ''
             end
 
-    suffix_length = 32 - prefix.length - center.length - (checksum ? 2 : 0) - (legacy ? 2 : (version ? 1 : 0))
-    suffix = random_bytes(suffix_length)
+    random_length = 32 - (prefix ? prefix.length : 0) - (suffix ? suffix.length : 0) - center.length - (checksum ? 2 : 0) - ((legacy || version) ? 2 : 0) # (legacy ? 2 : (version ? 1 : 0))
+    random = random_bytes(random_length)
 
-    joined = "#{prefix}#{center}#{suffix}"
+    joined = "#{prefix}#{center}#{random}#{suffix}"
 
     if legacy
       joined = "#{joined[0, 12]}#{center.length > 0 ? '1' : '4'}#{joined[12, 3]}#{random_char('89ab')}#{joined[15..]}"
     elsif version
-      joined = "#{joined[0, 12]}9#{joined[12..]}"
+      joined = "#{joined[0, 12]}9#{joined[12, 3]}#{random_char('89ab')}#{joined[15..]}" # {joined[12..]}
     end
 
     joined += calc_checksum(joined) if checksum
